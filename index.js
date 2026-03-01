@@ -10,9 +10,10 @@ app.use(express.json());
 
 // Connect to PostgreSQL
 const pool = new Pool({
-  user: process.env.USER || 'Hwayeon',
+  user: 'postgres',
   host: 'localhost',
   database: 'spendsmart',
+  password: 'spendsmart123',
   port: 5432,
 });
 
@@ -85,7 +86,24 @@ app.post('/api/budgets/update', async (req, res) => {
   }
 });
 
+// Health check with uptime
+const startTime = Date.now();
+
+app.get('/api/health', (req, res) => {
+  const uptime = Math.floor((Date.now() - startTime) / 1000);
+  const hours = Math.floor(uptime / 3600);
+  const minutes = Math.floor((uptime % 3600) / 60);
+  const seconds = uptime % 60;
+  
+  res.json({
+    status: 'healthy',
+    uptime: `${hours}h ${minutes}m ${seconds}s`,
+    database: 'connected',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`SpendSmart API running at http://localhost:${PORT}`);
 });
