@@ -1,6 +1,7 @@
 // plaidClient.js
 // One shared connection to Plaid. Reads keys from .env.
 
+require('dotenv').config();
 const { Configuration, PlaidApi, PlaidEnvironments } = require('plaid');
 
 const env = process.env.PLAID_ENV;
