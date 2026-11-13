@@ -10,6 +10,7 @@ app.use(express.json());
 
 // Connect to PostgreSQL
 const pool = require('./db');
+const { getBudgetsWithSpent } = require('./spending');
 
 // Test database connection
 pool.connect((err) => {
@@ -25,16 +26,16 @@ app.get('/', (req, res) => {
   res.send('SpendSmart API is running! 🚀');
 });
 
-// Route 2: Get budgets FROM DATABASE with stickers
+// Route 2: Get budgets, with spent calculated from this month's transactions
 app.get('/api/budgets', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM budgets');
-    
+    const budgets = await getBudgetsWithSpent();
+
     // Add sticker tiers (mock data for now)
-    const budgetsWithStickers = result.rows.map(budget => {
-      const percentage = (budget.spent / budget.budget) * 100;
+    const budgetsWithStickers = budgets.map((budget) => {
+      const percentage = budget.budget > 0 ? (budget.spent / budget.budget) * 100 : 0;
       let sticker = null;
-      
+
       // Sticker logic: 80-105% = on track gets a sticker
       if (percentage >= 80 && percentage <= 105) {
         // Mock different achievement levels
@@ -45,36 +46,33 @@ app.get('/api/budgets', async (req, res) => {
         else if (budget.category === 'travel') sticker = '💫'; // 3 months - Gold
         else sticker = '⭐️'; // 1 month - Bronze
       }
-      
+
       return { ...budget, sticker };
     });
-    
+
     res.json(budgetsWithStickers);
   } catch (error) {
+    console.error('GET /api/budgets failed:', error);
     res.status(500).json({ error: 'Database error' });
   }
 });
 
-// Route 3: Get spending summary FROM DATABASE with household sticker
+// Route 3: Get spending summary, from the same numbers as Route 2
 app.get('/api/summary', async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT 
-        SUM(budget) as total_budget,
-        SUM(spent) as total_spent
-      FROM budgets
-    `);
-    
-    const totalBudget = parseInt(result.rows[0].total_budget);
-    const totalSpent = parseInt(result.rows[0].total_spent);
-    const percentageUsed = Math.round((totalSpent / totalBudget) * 100);
-    
+    const budgets = await getBudgetsWithSpent();
+
+    const totalBudget = budgets.reduce((sum, b) => sum + b.budget, 0);
+    const totalSpentCents = budgets.reduce((sum, b) => sum + b.spent_cents, 0);
+    const totalSpent = Math.round(totalSpentCents / 100);
+    const percentageUsed = totalBudget > 0 ? Math.round((totalSpent / totalBudget) * 100) : 0;
+
     // Household sticker logic (80-105% = on track)
     let householdSticker = null;
     if (percentageUsed >= 80 && percentageUsed <= 105) {
       householdSticker = '💫'; // Gold - 3 months household streak
     }
-    
+
     res.json({
       totalBudget,
       totalSpent,
@@ -83,6 +81,7 @@ app.get('/api/summary', async (req, res) => {
       householdSticker,
     });
   } catch (error) {
+    console.error('GET /api/summary failed:', error);
     res.status(500).json({ error: 'Database error' });
   }
 });
