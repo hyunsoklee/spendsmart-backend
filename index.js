@@ -12,6 +12,7 @@ app.use(express.json());
 const pool = require('./db');
 const { getBudgetsWithSpent, getCategoryTransactions } = require('./spending');
 const { retagTransaction } = require('./retag');
+const { setTransactionSplit, listUsers } = require('./split');
 
 // Test database connection
 pool.connect((err) => {
@@ -125,6 +126,41 @@ app.post('/api/transactions/:id/category', async (req, res) => {
       return res.status(error.status).json({ error: error.message });
     }
     console.error('POST /api/transactions/:id/category failed:', error);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Route 3d: Set who a charge belongs to (a person's id, or null for Shared)
+app.post('/api/transactions/:id/split', async (req, res) => {
+  const txnId = parseInt(req.params.id, 10);
+  if (Number.isNaN(txnId) || !('splitUserId' in req.body)) {
+    return res.status(400).json({ error: 'Invalid transaction id or missing splitUserId' });
+  }
+
+  const raw = req.body.splitUserId;
+  const splitUserId = raw === null ? null : parseInt(raw, 10);
+  if (splitUserId !== null && Number.isNaN(splitUserId)) {
+    return res.status(400).json({ error: 'Invalid splitUserId' });
+  }
+
+  try {
+    const result = await setTransactionSplit(txnId, splitUserId);
+    res.json(result);
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ error: error.message });
+    }
+    console.error('POST /api/transactions/:id/split failed:', error);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Route 3e: Household members, for the split control
+app.get('/api/users', async (req, res) => {
+  try {
+    res.json(await listUsers());
+  } catch (error) {
+    console.error('GET /api/users failed:', error);
     res.status(500).json({ error: 'Database error' });
   }
 });
