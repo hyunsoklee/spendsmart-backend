@@ -11,6 +11,7 @@ app.use(express.json());
 // Connect to PostgreSQL
 const pool = require('./db');
 const { getBudgetsWithSpent, getCategoryTransactions } = require('./spending');
+const { retagTransaction } = require('./retag');
 
 // Test database connection
 pool.connect((err) => {
@@ -98,6 +99,32 @@ app.get('/api/budgets/:id/transactions', async (req, res) => {
     res.json(transactions);
   } catch (error) {
     console.error('GET /api/budgets/:id/transactions failed:', error);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Route 3c: Move a charge to another category and remember the merchant
+app.post('/api/transactions/:id/category', async (req, res) => {
+  const txnId = parseInt(req.params.id, 10);
+  const budgetId = parseInt(req.body.budgetId, 10);
+  if (Number.isNaN(txnId) || Number.isNaN(budgetId)) {
+    return res.status(400).json({ error: 'Invalid transaction or budget id' });
+  }
+
+  const remember = req.body.remember !== false; // default: remember the merchant
+  const restore = parseInt(req.body.restoreRuleBudgetId, 10);
+
+  try {
+    const result = await retagTransaction(txnId, budgetId, {
+      remember,
+      restoreRuleBudgetId: Number.isNaN(restore) ? null : restore,
+    });
+    res.json(result);
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ error: error.message });
+    }
+    console.error('POST /api/transactions/:id/category failed:', error);
     res.status(500).json({ error: 'Database error' });
   }
 });
