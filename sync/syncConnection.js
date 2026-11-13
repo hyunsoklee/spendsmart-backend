@@ -82,32 +82,35 @@ async function syncConnection(connectionId) {
            (account_id, provider, provider_txn_id, amount_cents, currency, date,
             authorized_date, merchant_name, raw_description, provider_category,
             account_owner_raw, category_id, category_source, pending, pending_of_id,
-            split_user_id, excluded)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+            split_user_id, excluded, merchant_entity_id, provider_category_primary)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
          ON CONFLICT (provider, provider_txn_id) DO UPDATE SET
-           amount_cents      = EXCLUDED.amount_cents,
-           date              = EXCLUDED.date,
-           authorized_date   = EXCLUDED.authorized_date,
-           merchant_name     = EXCLUDED.merchant_name,
-           raw_description   = EXCLUDED.raw_description,
-           provider_category = EXCLUDED.provider_category,
-           account_owner_raw = EXCLUDED.account_owner_raw,
-           pending           = EXCLUDED.pending,
-           pending_of_id     = COALESCE(EXCLUDED.pending_of_id, transactions.pending_of_id),
+           amount_cents              = EXCLUDED.amount_cents,
+           date                      = EXCLUDED.date,
+           authorized_date           = EXCLUDED.authorized_date,
+           merchant_name             = EXCLUDED.merchant_name,
+           raw_description           = EXCLUDED.raw_description,
+           provider_category         = EXCLUDED.provider_category,
+           provider_category_primary = EXCLUDED.provider_category_primary,
+           merchant_entity_id        = EXCLUDED.merchant_entity_id,
+           account_owner_raw         = EXCLUDED.account_owner_raw,
+           pending                   = EXCLUDED.pending,
+           pending_of_id             = COALESCE(EXCLUDED.pending_of_id, transactions.pending_of_id),
            -- Rung 1: a hand-tagged row keeps its category.
-           category_id       = CASE WHEN transactions.category_source = 'user'
-                                    THEN transactions.category_id
-                                    ELSE EXCLUDED.category_id END,
-           excluded          = CASE WHEN transactions.category_source = 'user'
-                                    THEN transactions.excluded
-                                    ELSE EXCLUDED.excluded END,
-           updated_at        = now()
+           category_id               = CASE WHEN transactions.category_source = 'user'
+                                            THEN transactions.category_id
+                                            ELSE EXCLUDED.category_id END,
+           excluded                  = CASE WHEN transactions.category_source = 'user'
+                                            THEN transactions.excluded
+                                            ELSE EXCLUDED.excluded END,
+           updated_at                = now()
          RETURNING (xmax = 0) AS inserted`,
         [
           acct.id, adapter.PROVIDER, t.providerTxnId, t.amountCents, t.currency, t.date,
           t.authorizedDate, t.merchantName, t.rawDescription,
           t.categoryDetailed || t.categoryPrimary, t.accountOwnerRaw,
           categoryId, categorySource, t.pending, pendingOfId, splitUserId, excluded,
+          t.merchantEntityId, t.categoryPrimary,
         ]
       );
       if (rows[0].inserted) counts.added += 1;
