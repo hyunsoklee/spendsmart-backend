@@ -10,7 +10,7 @@ app.use(express.json());
 
 // Connect to PostgreSQL
 const pool = require('./db');
-const { getBudgetsWithSpent } = require('./spending');
+const { getBudgetsWithSpent, getCategoryTransactions } = require('./spending');
 
 // Test database connection
 pool.connect((err) => {
@@ -82,6 +82,22 @@ app.get('/api/summary', async (req, res) => {
     });
   } catch (error) {
     console.error('GET /api/summary failed:', error);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Route 3b: This month's charges for one budget category, newest first
+app.get('/api/budgets/:id/transactions', async (req, res) => {
+  const budgetId = parseInt(req.params.id, 10);
+  if (Number.isNaN(budgetId)) {
+    return res.status(400).json({ error: 'Invalid budget id' });
+  }
+
+  try {
+    const transactions = await getCategoryTransactions(budgetId);
+    res.json(transactions);
+  } catch (error) {
+    console.error('GET /api/budgets/:id/transactions failed:', error);
     res.status(500).json({ error: 'Database error' });
   }
 });
