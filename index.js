@@ -13,6 +13,7 @@ const pool = require('./db');
 const { getBudgetsWithSpent, getCategoryTransactions } = require('./spending');
 const { retagTransaction } = require('./retag');
 const { setTransactionSplit, listUsers } = require('./split');
+const { getSetup, saveSetup } = require('./setup');
 
 // Test database connection
 pool.connect((err) => {
@@ -161,6 +162,29 @@ app.get('/api/users', async (req, res) => {
     res.json(await listUsers());
   } catch (error) {
     console.error('GET /api/users failed:', error);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Route 3f: Everything the setup screens need
+app.get('/api/setup', async (req, res) => {
+  try {
+    res.json(await getSetup());
+  } catch (error) {
+    console.error('GET /api/setup failed:', error);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Route 3g: Save planned savings and all budgets together, or nothing
+app.post('/api/setup', async (req, res) => {
+  try {
+    res.json(await saveSetup(req.body));
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ error: error.message });
+    }
+    console.error('POST /api/setup failed:', error);
     res.status(500).json({ error: 'Database error' });
   }
 });
