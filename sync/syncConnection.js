@@ -4,6 +4,7 @@
 
 const pool = require('../db');
 const { loadRules, categorize } = require('./categorize');
+const { decryptToken } = require('../tokenCrypto');
 
 // One adapter per provider. Teller or SimpleFIN would be added here.
 const adapters = {
@@ -19,7 +20,9 @@ async function syncConnection(connectionId) {
   if (!adapter) throw new Error(`No adapter for provider "${conn.provider}"`);
 
   // 1. Card accounts: insert new ones, refresh names on existing ones.
-  const cards = await adapter.listCardAccounts(conn.access_token);
+    // The token is stored encrypted. Decrypt it only for this sync.
+  const accessToken = decryptToken(conn.access_token);
+  const cards = await adapter.listCardAccounts(accessToken);
   const accountByProviderId = new Map();
   for (const c of cards) {
     const { rows } = await pool.query(
@@ -35,7 +38,7 @@ async function syncConnection(connectionId) {
 
   // 2. Changes since the last sync, plus the current rules.
   const { added, modified, removed, nextCursor } = await adapter.fetchChanges(
-    conn.access_token,
+    accessToken,
     conn.sync_cursor
   );
   const rules = await loadRules();

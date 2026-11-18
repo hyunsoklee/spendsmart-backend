@@ -5,6 +5,7 @@
 require('dotenv').config();
 const plaid = require('../plaidClient');
 const pool = require('../db');
+const { encryptToken } = require('../tokenCrypto');
 
 const USER_ID = 1; // Hyun, from the users table
 
@@ -23,7 +24,7 @@ const USER_ID = 1; // Hyun, from the users table
       `INSERT INTO connections (user_id, provider, provider_item_id, institution_name, access_token)
        VALUES ($1, 'plaid', $2, $3, $4)
        RETURNING id`,
-      [USER_ID, exchanged.item_id, 'First Platypus Bank (Sandbox)', exchanged.access_token]
+      [USER_ID, exchanged.item_id, 'First Platypus Bank (Sandbox)', encryptToken(exchanged.access_token)]
     );
 
     console.log(`✅ Saved connection id ${rows[0].id}. Now run: node scripts/sync-all.js`);
