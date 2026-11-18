@@ -8,6 +8,9 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(express.json());
 
+// Only callers that send the shared key are answered (see apiKey.js).
+app.use('/api', require('./apiKey'));
+
 // Connect to PostgreSQL
 const pool = require('./db');
 const { getBudgetsWithSpent, getCategoryTransactions } = require('./spending');
