@@ -15,6 +15,9 @@ const { retagTransaction } = require('./retag');
 const { setTransactionSplit, listUsers } = require('./split');
 const { getSetup, saveSetup } = require('./setup');
 
+// The link page and its routes (this Mac only).
+app.use(require('./linkRoutes'));
+
 // Test database connection
 pool.connect((err) => {
   if (err) {

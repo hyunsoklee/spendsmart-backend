@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sprinkles: link a bank</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #F2F2F7;
+    color: #000000;
+    font: 16px/1.45 -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  }
+  main { max-width: 640px; margin: 0 auto; padding: 48px 20px 80px; }
+  h1 { font-size: 28px; letter-spacing: -0.5px; margin: 0 0 6px; }
+  h2 { font-size: 20px; margin: 40px 0 12px; }
+  p { margin: 0 0 12px; }
+  .quiet { color: #636366; font-size: 14px; }
+  .env {
+    display: inline-block; margin: 0 0 8px; padding: 4px 10px; border-radius: 999px;
+    font-size: 13px; font-weight: 600; background: #E5E5EA; color: #3A3A3C;
+  }
+  .env.real { background: #FFF1D6; color: #7A4A00; }
+  .card { background: #FFFFFF; border-radius: 16px; padding: 20px; margin: 0 0 16px; }
+  .card.fresh { outline: 2px solid #007AFF; }
+  fieldset { border: 0; margin: 0 0 16px; padding: 0; }
+  legend { padding: 0; margin: 0 0 8px; font-weight: 600; }
+  .choice { display: inline-flex; align-items: center; gap: 6px; margin-right: 20px; }
+  .check { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 16px; }
+  .check input { margin-top: 4px; }
+  button {
+    appearance: none; border: 0; border-radius: 12px; padding: 12px 18px;
+    font: inherit; font-weight: 600; cursor: pointer;
+    background: #E5E5EA; color: #000000;
+  }
+  button.primary { background: #1C1C1E; color: #FFFFFF; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button:focus-visible, select:focus-visible, input:focus-visible {
+    outline: 3px solid #007AFF; outline-offset: 2px;
+  }
+  #message { min-height: 24px; margin: 14px 0 0; font-weight: 500; }
+  #message.error { color: #B3261E; }
+  .bank-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .bank-name { font-size: 18px; font-weight: 700; }
+  .rows { margin: 14px 0; border-top: 1px solid #E5E5EA; }
+  .row {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    padding: 12px 0; border-bottom: 1px solid #E5E5EA;
+  }
+  .row-name { min-width: 0; overflow-wrap: anywhere; }
+  select {
+    font: inherit; padding: 8px 10px; border-radius: 10px;
+    border: 1px solid #C7C7CC; background: #FFFFFF; color: #000000;
+  }
+  .bank-foot { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .result { font-size: 14px; color: #3A3A3C; }
+  .result.error { color: #B3261E; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Sprinkles</h1>
+  <p class="env" id="env">Loading</p>
+  <p class="quiet" id="envNote"></p>
+
+  <h2>Link a bank</h2>
+  <div class="card">
+    <p>Sign in with the primary cardholder's login. One login brings in every card on that account. Do not sign in to a bank that is already listed under Linked banks.</p>
+    <fieldset>
+      <legend>Whose login is this?</legend>
+      <div id="who"></div>
+    </fieldset>
+    <label class="check">
+      <input type="checkbox" id="allowDuplicate">
+      <span>Allow a second login at a bank that is already linked. Leave this off unless the two logins are separate accounts.</span>
+    </label>
+    <button class="primary" id="linkButton" disabled>Link a bank</button>
+    <p id="message" role="status" aria-live="polite"></p>
+  </div>
+
+  <h2>Linked banks</h2>
+  <div id="banks"></div>
+
+  <details>
+    <summary class="quiet">Troubleshooting</summary>
+    <pre id="events" class="quiet"></pre>
+  </details>
+</main>
+
+<script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var state = { people: [], connections: [], environment: null };
+  var freshConnectionId = null;   // the bank linked a moment ago, highlighted
+  var results = {};               // connection id -> last sync message
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  function el(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function setMessage(text, isError) {
+    var m = $('message');
+    m.textContent = text || '';
+    m.className = isError ? 'error' : '';
+  }
+
+  async function call(method, url, body) {
+    var res = await fetch(url, {
+      method: method,
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    var data = null;
+    try { data = await res.json(); } catch (e) { data = null; }
+    if (!res.ok) {
+      var err = new Error((data && data.error) || ('Request failed (' + res.status + ')'));
+      err.status = res.status;
+      err.code = data && data.code;
+      throw err;
+    }
+    return data;
+  }
+
+  function personName(id) {
+    var p = state.people.find(function (x) { return x.id === id; });
+    return p ? p.name : 'Someone';
+  }
+
+  function formatWhen(iso) {
+    return new Date(iso).toLocaleString('en-US', {
+      month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    });
+  }
+
+  function renderEnvironment() {
+    var real = state.environment === 'production';
+    $('env').textContent = real ? 'Production: real banks' : 'Sandbox: test banks only';
+    $('env').className = real ? 'env real' : 'env';
+    $('envNote').textContent = real
+      ? 'Each new link uses one of your 10 Plaid connections. Removing a link does not give it back.'
+      : 'Nothing on this page uses a real connection. Sign in with user_good and pass_good.';
+  }
+
+  function renderWho() {
+    var box = $('who');
+    var chosen = box.querySelector('input:checked');
+    var chosenId = chosen ? Number(chosen.value) : (state.people[0] && state.people[0].id);
+    box.textContent = '';
+    state.people.forEach(function (p) {
+      var label = el('label', 'choice');
+      var input = el('input');
+      input.type = 'radio';
+      input.name = 'who';
+      input.value = String(p.id);
+      input.checked = p.id === chosenId;
+      label.appendChild(input);
+      label.appendChild(el('span', null, p.name));
+      box.appendChild(label);
+    });
+  }
+
+  function renderBanks() {
+    var box = $('banks');
+    box.textContent = '';
+
+    if (state.connections.length === 0) {
+      box.appendChild(el('p', 'quiet', 'No banks linked yet.'));
+      return;
+    }
+
+    // Newest first, so a bank linked a moment ago is at the top.
+    state.connections.slice().reverse().forEach(function (c) {
+      var neverFetched = !c.lastSyncedAt;
+      var card = el('div', c.id === freshConnectionId ? 'card fresh' : 'card');
+
+      var head = el('div', 'bank-head');
+      head.appendChild(el('span', 'bank-name', c.institutionName || 'Unknown bank'));
+      head.appendChild(el('span', 'quiet', personName(c.userId) + "'s login"));
+      card.appendChild(head);
+
+      var summary = c.cards.length + (c.cards.length === 1 ? ' card' : ' cards') + ' · ' +
+        (neverFetched
+          ? 'Charges not fetched yet'
+          : c.charges + (c.charges === 1 ? ' charge' : ' charges') + ' · Last fetched ' + formatWhen(c.lastSyncedAt));
+      card.appendChild(el('p', 'quiet', summary));
+
+      if (c.cards.length === 0) {
+        card.appendChild(el('p', 'quiet', 'No credit cards were found on this login.'));
+      } else {
+        var rows = el('div', 'rows');
+        c.cards.forEach(function (a) {
+          var row = el('div', 'row');
+          var selectId = 'split-' + a.id;
+          var name = el('label', 'row-name', a.name + (a.mask ? ' ··' + a.mask : ''));
+          name.htmlFor = selectId;
+          row.appendChild(name);
+
+          var select = el('select');
+          select.id = selectId;
+          var shared = el('option', null, 'Shared');
+          shared.value = '';
+          select.appendChild(shared);
+          state.people.forEach(function (p) {
+            var option = el('option', null, p.name);
+            option.value = String(p.id);
+            select.appendChild(option);
+          });
+          select.value = a.defaultSplitUserId === null ? '' : String(a.defaultSplitUserId);
+          select.addEventListener('change', function () { saveSplit(c.id, a.id, select); });
+          row.appendChild(select);
+          rows.appendChild(row);
+        });
+        card.appendChild(rows);
+        card.appendChild(el('p', 'quiet', neverFetched
+          ? 'Choose who each card belongs to, then fetch its charges.'
+          : 'A change here applies to new charges only.'));
+      }
+
+      var foot = el('div', 'bank-foot');
+      var button = el('button', neverFetched ? 'primary' : null, neverFetched ? 'Fetch charges' : 'Fetch new charges');
+      button.addEventListener('click', function () { fetchCharges(c.id, button); });
+      foot.appendChild(button);
+      var result = el('span', 'result', '');
+      result.id = 'result-' + c.id;
+      result.setAttribute('role', 'status');
+      if (results[c.id]) {
+        result.textContent = results[c.id].text;
+        if (results[c.id].isError) result.className = 'result error';
+      }
+      foot.appendChild(result);
+      card.appendChild(foot);
+
+      box.appendChild(card);
+    });
+  }
+
+  function setResult(connectionId, text, isError) {
+    results[connectionId] = { text: text, isError: Boolean(isError) };
+    var node = $('result-' + connectionId);
+    if (node) {
+      node.textContent = text;
+      node.className = isError ? 'result error' : 'result';
+    }
+  }
+
+  async function refresh() {
+    state = await call('GET', '/api/link/status');
+    renderEnvironment();
+    renderWho();
+    renderBanks();
+    $('linkButton').disabled = state.people.length === 0;
+  }
+
+  async function saveSplit(connectionId, accountId, select) {
+    var splitUserId = select.value === '' ? null : Number(select.value);
+    var card = null;
+    state.connections.forEach(function (c) {
+      c.cards.forEach(function (a) { if (a.id === accountId) card = a; });
+    });
+
+    select.disabled = true;
+    try {
+      await call('POST', '/api/link/accounts/' + accountId + '/default-split', { splitUserId: splitUserId });
+      if (card) card.defaultSplitUserId = splitUserId;
+      setResult(connectionId, 'Saved.');
+    } catch (err) {
+      // Put the choice back to what is actually saved.
+      if (card) select.value = card.defaultSplitUserId === null ? '' : String(card.defaultSplitUserId);
+      setResult(connectionId, 'Could not save: ' + err.message, true);
+    }
+    select.disabled = false;
+  }
+
+  async function fetchCharges(connectionId, button) {
+    button.disabled = true;
+    setResult(connectionId, 'Fetching...');
+    try {
+      var counts = await call('POST', '/api/link/connections/' + connectionId + '/sync');
+      var text = counts.added + ' new, ' + counts.modified + ' updated, ' + counts.removed + ' removed.';
+      if (counts.added === 0 && counts.modified === 0) {
+        text += ' A new link can take a few minutes to have its history ready. Try again shortly.';
+      }
+      results[connectionId] = { text: text, isError: false };
+      await refresh();
+    } catch (err) {
+      setResult(connectionId, 'Could not fetch: ' + err.message, true);
+      button.disabled = false;
+    }
+  }
+
+    // A plain record of what Plaid's window reports, for troubleshooting.
+  // It holds step names and bank IDs only, never anything typed into the window.
+  function logEvent(eventName, metadata) {
+    var m = metadata || {};
+    $('events').textContent += eventName + ' | ' + (m.institution_id || '-') + ' | ' +
+      (m.institution_name || '-') + ' | ' + (m.view_name || '-') + '\n';
+  }
+
+  function alreadyLinked(institutionId) {
+    return state.connections.some(function (c) {
+      return c.institutionId === institutionId && c.status !== 'disconnected';
+    });
+  }
+
+  async function startLink() {
+    var chosen = $('who').querySelector('input:checked');
+    if (!chosen) { setMessage('Choose whose login this is.', true); return; }
+    var userId = Number(chosen.value);
+    var allowDuplicate = $('allowDuplicate').checked;
+    var stoppedAsDuplicate = false;
+
+    $('linkButton').disabled = true;
+    setMessage('Opening the sign-in window...');
+
+    try {
+      if (!window.Plaid) throw new Error('the Plaid script did not load. Check the internet connection and reload.');
+      var token = await call('POST', '/api/link/token', { userId: userId });
+
+      var handler = window.Plaid.create({
+        token: token.linkToken,
+
+        // Keep a record of the steps. Plaid reports them late, so nothing is decided here.
+        onEvent: function (eventName, metadata) {
+          logEvent(eventName, metadata);
+        },
+
+        onSuccess: async function (publicToken, metadata) {
+          var institution = (metadata && metadata.institution) || {};
+          setMessage('Saving the link...');
+          try {
+            var saved = await call('POST', '/api/link/connections', {
+              userId: userId,
+              publicToken: publicToken,
+              institutionId: institution.institution_id || null,
+              institutionName: institution.name || null,
+              allowDuplicate: allowDuplicate,
+            });
+            freshConnectionId = saved.connectionId;
+            $('allowDuplicate').checked = false;
+            await refresh();
+            setMessage((institution.name || 'The bank') + ' is linked. Choose who each card belongs to below, then fetch its charges.');
+          } catch (err) {
+            if (err.code === 'ALREADY_LINKED') {
+              setMessage((institution.name || 'This bank') +
+                ' is already linked, so this sign-in was not saved. One login brings in every card on it.', true);
+            } else {
+              setMessage('Could not save the link: ' + err.message, true);
+            }
+          }
+          $('linkButton').disabled = false;
+        },
+
+        onExit: function (error) {
+          $('linkButton').disabled = false;
+          if (stoppedAsDuplicate) return;
+          if (error) {
+            setMessage('The sign-in did not finish: ' + (error.display_message || error.error_message || error.error_code), true);
+          } else {
+            setMessage('Sign-in closed. Nothing was linked.');
+          }
+        },
+      });
+
+      handler.open();
+    } catch (err) {
+      setMessage('Could not open the sign-in window: ' + err.message, true);
+      $('linkButton').disabled = false;
+    }
+  }
+
+  $('linkButton').addEventListener('click', startLink);
+
+  logEvent('PAGE_VERSION 6', {});
+  refresh().catch(function (err) {
+    setMessage('Could not load this page: ' + err.message, true);
+  });
+})();
+</script>
+</body>
+</html>

@@ -72,4 +72,35 @@ async function fetchChanges(accessToken, cursor) {
   return { added, modified, removed, nextCursor };
 }
 
-module.exports = { PROVIDER, listCardAccounts, fetchChanges };
+// How far back to fetch charges when a bank is first linked: Plaid's maximum.
+// Plaid does not allow this to be changed after a connection is created.
+const HISTORY_DAYS = 730;
+
+// A short-lived token that lets the browser open Plaid's sign-in window.
+async function createLinkToken(userId) {
+  const { data } = await plaid.linkTokenCreate({
+    user: { client_user_id: `user-${userId}` },
+    client_name: 'Sprinkles',
+    products: ['transactions'],
+    country_codes: ['US'],
+    language: 'en',
+    transactions: { days_requested: HISTORY_DAYS },
+    // Cards only: checking, savings and loans are never offered.
+    account_filters: { credit: { account_subtypes: ['credit card'] } },
+  });
+  return data.link_token;
+}
+
+// Trades the one-time token from the sign-in window for the lasting one.
+async function exchangePublicToken(publicToken) {
+  const { data } = await plaid.itemPublicTokenExchange({ public_token: publicToken });
+  return { accessToken: data.access_token, itemId: data.item_id };
+}
+
+module.exports = {
+  PROVIDER,
+  listCardAccounts,
+  fetchChanges,
+  createLinkToken,
+  exchangePublicToken,
+};
