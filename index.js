@@ -241,6 +241,19 @@ app.get('/api/cards', async (req, res) => {
   }
 });
 
+// Fetch new charges from the banks, unless they were fetched recently.
+const { refreshFromBanks } = require('./syncAll');
+
+app.post('/api/sync', async (req, res) => {
+  try {
+    const minutes = Number((req.body || {}).ifOlderThanMinutes);
+    res.json(await refreshFromBanks(Number.isFinite(minutes) ? minutes : 60));
+  } catch (err) {
+    console.error('Sync route error:', err.message);
+    res.status(500).json({ error: 'Could not fetch from the banks' });
+  }
+});
+
 // Health check with uptime
 const startTime = Date.now();
 
