@@ -197,21 +197,24 @@ app.post('/api/setup', async (req, res) => {
 
 // Route 4: Update budget IN DATABASE
 app.post('/api/budgets/update', async (req, res) => {
-  const { category, newBudget } = req.body;
-  
+  const id = Number((req.body || {}).id);
+  const newBudget = Math.round(Number((req.body || {}).newBudget));
+
+  if (!Number.isInteger(id) || !Number.isFinite(newBudget) || newBudget < 0) {
+    return res.status(400).json({ error: 'id and newBudget are required' });
+  }
+
   try {
-    await pool.query(
-      'UPDATE budgets SET budget = $1 WHERE category = $2',
-      [newBudget, category]
+    const result = await pool.query(
+      'UPDATE budgets SET budget = $1 WHERE id = $2',
+      [newBudget, id]
     );
-    
-    res.json({
-      success: true,
-      message: `Budget for ${category} updated to $${newBudget}`,
-      category,
-      newBudget
-    });
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'No such category' });
+    }
+    res.json({ success: true, id, newBudget });
   } catch (error) {
+    console.error('POST /api/budgets/update failed:', error.message);
     res.status(500).json({ error: 'Database error' });
   }
 });

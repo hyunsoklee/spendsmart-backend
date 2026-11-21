@@ -18,7 +18,7 @@ const MONTH_CTE = `
 async function getBudgetsWithSpent(timeZone = DEFAULT_TIME_ZONE) {
   const { rows } = await pool.query(
     `${MONTH_CTE}
-     SELECT b.id, b.category, b.budget, b.is_system,
+     SELECT b.id, b.category, b.budget, b.is_system, b.icon,
             COALESCE(SUM(t.amount_cents), 0)::int AS spent_cents
      FROM budgets b
      CROSS JOIN month m

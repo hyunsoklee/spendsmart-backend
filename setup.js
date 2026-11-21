@@ -36,7 +36,7 @@ async function getSetup(timeZone = DEFAULT_TIME_ZONE) {
          SELECT (date_trunc('month', now() AT TIME ZONE $1::text) - interval '1 month')::date AS start_date,
                 date_trunc('month', now() AT TIME ZONE $1::text)::date AS end_date
        )
-       SELECT b.id, b.category, b.budget, b.is_system,
+       SELECT b.id, b.category, b.budget, b.is_system, b.icon,
               to_char(m.start_date, 'Mon') AS month_label,
               COALESCE(SUM(t.amount_cents), 0)::int AS last_month_cents
        FROM budgets b
@@ -65,6 +65,7 @@ async function getSetup(timeZone = DEFAULT_TIME_ZONE) {
     budgets: budgetsRes.rows.map((r) => ({
       id: r.id,
       category: r.category,
+      icon: r.icon,
       budget: r.budget,
       is_system: r.is_system,
       lastMonthSpent: Math.max(0, Math.round(r.last_month_cents / 100)),
