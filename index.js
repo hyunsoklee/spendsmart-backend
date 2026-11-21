@@ -257,6 +257,17 @@ app.post('/api/sync', async (req, res) => {
   }
 });
 
+// The kinds of charge a new category could be built from
+const { listKinds } = require('./kinds');
+app.get('/api/kinds', async (req, res) => {
+  try {
+    res.json(await listKinds());
+  } catch (err) {
+    console.error('GET /api/kinds failed:', err.message);
+    res.status(500).json({ error: 'Could not list kinds' });
+  }
+});
+
 // Health check with uptime
 const startTime = Date.now();
 
