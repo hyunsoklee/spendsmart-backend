@@ -15,7 +15,7 @@ async function loadRules() {
   const [catRes, merchRes, otherRes] = await Promise.all([
     pool.query('SELECT plaid_category, budget_id, skip FROM category_rules'),
     pool.query('SELECT merchant_entity_id, merchant_name, budget_id FROM merchant_rules'),
-    pool.query("SELECT id FROM budgets WHERE is_system = true AND category = 'other'"),
+    pool.query('SELECT id FROM budgets WHERE is_system = true ORDER BY id LIMIT 1'),
   ]);
 
   if (otherRes.rows.length === 0) {

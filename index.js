@@ -269,7 +269,7 @@ app.get('/api/kinds', async (req, res) => {
 });
 
 // Categories of your own
-const { createCategory, suggestForKinds } = require('./categories');
+const { createCategory, suggestForKinds, updateCategory, removeCategory } = require('./categories');
 
 app.post('/api/categories/suggest', async (req, res) => {
   try {
@@ -286,6 +286,24 @@ app.post('/api/categories', async (req, res) => {
   } catch (err) {
     if (!err.status) console.error('POST /api/categories failed:', err.message);
     res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not add the category' });
+  }
+});
+
+app.post('/api/categories/:id', async (req, res) => {
+  try {
+    res.json(await updateCategory(Number(req.params.id), req.body));
+  } catch (err) {
+    if (!err.status) console.error('POST /api/categories/:id failed:', err.message);
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not save the category' });
+  }
+});
+
+app.post('/api/categories/:id/remove', async (req, res) => {
+  try {
+    res.json(await removeCategory(Number(req.params.id), req.body));
+  } catch (err) {
+    if (!err.status) console.error('POST /api/categories/:id/remove failed:', err.message);
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not remove the category' });
   }
 });
 

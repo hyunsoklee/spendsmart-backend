@@ -114,6 +114,7 @@ async function listKinds(timeZone = DEFAULT_TIME_ZONE) {
       group: words(k.group),
       charges: k.charges,
       amount: Math.round(k.cents / 100),
+      amountCents: k.cents,
       lastMonthAmount: Math.round(k.lastMonthCents / 100),
       lastMonthCents: k.lastMonthCents,
       filedIn: {
