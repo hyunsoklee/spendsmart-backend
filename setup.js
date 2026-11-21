@@ -123,4 +123,4 @@ async function saveSetup(input, timeZone = DEFAULT_TIME_ZONE) {
   return getSetup(timeZone);
 }
 
-module.exports = { getSetup, saveSetup };
+module.exports = { getSetup, saveSetup, suggestBudget, isAmount };

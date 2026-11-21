@@ -268,6 +268,27 @@ app.get('/api/kinds', async (req, res) => {
   }
 });
 
+// Categories of your own
+const { createCategory, suggestForKinds } = require('./categories');
+
+app.post('/api/categories/suggest', async (req, res) => {
+  try {
+    res.json(await suggestForKinds((req.body || {}).kinds));
+  } catch (err) {
+    if (!err.status) console.error('POST /api/categories/suggest failed:', err.message);
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not work that out' });
+  }
+});
+
+app.post('/api/categories', async (req, res) => {
+  try {
+    res.json(await createCategory(req.body));
+  } catch (err) {
+    if (!err.status) console.error('POST /api/categories failed:', err.message);
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not add the category' });
+  }
+});
+
 // Health check with uptime
 const startTime = Date.now();
 
