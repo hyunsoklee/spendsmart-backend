@@ -48,7 +48,7 @@ async function getSetup(timeZone = DEFAULT_TIME_ZONE) {
         AND t.date >= m.start_date
         AND t.date <  m.end_date
        GROUP BY b.id, m.start_date
-       ORDER BY b.id`,
+       ORDER BY b.is_system, b.id`,
       [timeZone]
     ),
   ]);
