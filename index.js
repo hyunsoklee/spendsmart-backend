@@ -276,6 +276,8 @@ const {
   removeCategory,
   previewRemoveCategory,
   saveCategoryOrder,
+  listCategoryKinds,
+  setCategoryKinds,  
 } = require('./categories');
 
 app.post('/api/categories/suggest', async (req, res) => {
@@ -329,6 +331,24 @@ app.post('/api/category-order', async (req, res) => {
   } catch (err) {
     if (!err.status) console.error('POST /api/category-order failed:', err.message);
     res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not save the order' });
+  }
+});
+
+app.get('/api/categories/:id/kinds', async (req, res) => {
+  try {
+    res.json(await listCategoryKinds(Number(req.params.id)));
+  } catch (err) {
+    if (!err.status) console.error('GET /api/categories/:id/kinds failed:', err.message);
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not list kinds' });
+  }
+});
+
+app.post('/api/categories/:id/kinds', async (req, res) => {
+  try {
+    res.json(await setCategoryKinds(Number(req.params.id), req.body));
+  } catch (err) {
+    if (!err.status) console.error('POST /api/categories/:id/kinds failed:', err.message);
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not save' });
   }
 });
 

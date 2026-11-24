@@ -563,6 +563,184 @@ async function saveCategoryOrder(ids) {
   }
 }
 
+// Re-file this month's automatically filed charges of the given kinds,
+// following the rules as they now stand. Returns how many moved.
+async function refileThisMonth(client, rules, kindCodes, timeZone) {
+  if (kindCodes.length === 0) return 0;
+  const { rows } = await client.query(
+    `SELECT id, merchant_entity_id, merchant_name, provider_category,
+            provider_category_primary, category_id, excluded
+     FROM transactions
+     WHERE category_source = 'auto'
+       AND removed_at IS NULL
+       AND date >= date_trunc('month', now() AT TIME ZONE $1::text)::date
+       AND date <  (date_trunc('month', now() AT TIME ZONE $1::text) + interval '1 month')::date
+       AND provider_category = ANY($2::text[])`,
+    [timeZone, kindCodes]
+  );
+  let moved = 0;
+  for (const row of rows) {
+    const next = categorize(
+      {
+        merchantEntityId: row.merchant_entity_id,
+        merchantName: row.merchant_name,
+        categoryDetailed: row.provider_category,
+        categoryPrimary: row.provider_category_primary,
+      },
+      rules
+    );
+    if (next.categoryId !== row.category_id || next.excluded !== row.excluded) {
+      await client.query(
+        `UPDATE transactions
+         SET category_id = $1, excluded = $2, updated_at = now()
+         WHERE id = $3`,
+        [next.categoryId, next.excluded, row.id]
+      );
+      moved += 1;
+    }
+  }
+  return moved;
+}
+
+// The kinds a category could hold: the ones that file there today and the
+// rest, each with where it would go if it did not belong here.
+async function listCategoryKinds(id, timeZone = DEFAULT_TIME_ZONE) {
+  if (!Number.isInteger(id)) throw httpError(400, 'Unknown category');
+
+  const [{ kinds }, rules, budgetsRes] = await Promise.all([
+    listKinds(timeZone),
+    loadRules(),
+    pool.query('SELECT id, category, icon, is_system FROM budgets'),
+  ]);
+  const all = budgetsRes.rows;
+  const target = all.find((b) => b.id === id);
+  if (!target) throw httpError(404, 'Category not found');
+  if (target.is_system) throw httpError(400, 'This category takes whatever has no other place');
+  const other = all.find((b) => b.is_system);
+  if (!other) throw new Error('No system category found.');
+
+  const byId = new Map(all.map((b) => [b.id, b]));
+  const describe = (b) => ({ id: b.id, category: b.category, icon: b.icon, isOther: b.is_system });
+
+  // Where a kind would go if it did not belong here: its broad group's
+  // category, unless that is this one, in which case Other.
+  // null means "not counted as spending".
+  const elsewhereFor = (kind) => {
+    const group = groupOfKind(kind);
+    const broad = group ? rules.byCategory.get(group) : null;
+    if (broad && broad.skip) return null;
+    const to = broad && broad.budgetId !== id ? byId.get(broad.budgetId) : null;
+    return describe(to || other);
+  };
+
+  const rows = kinds.map((k) => ({
+    kind: k.kind,
+    label: k.label,
+    charges: k.charges,
+    amount: k.amount,
+    belongs: k.filedIn.id === id,
+    filedIn: k.filedIn,
+    elsewhere: elsewhereFor(k.kind),
+  }));
+
+  // Kinds that file here by a rule of their own but have had no charges lately.
+  const seen = new Set(rows.map((r) => r.kind));
+  for (const [kind, rule] of rules.byCategory) {
+    if (rule.budgetId !== id || seen.has(kind)) continue;
+    const group = groupOfKind(kind);
+    if (kind === group) continue; // a broad group, not a kind
+    rows.push({
+      kind,
+      label: labelForKind(kind, group),
+      charges: 0,
+      amount: 0,
+      belongs: true,
+      filedIn: describe(target),
+      elsewhere: elsewhereFor(kind),
+    });
+  }
+
+  return { id, category: target.category, kinds: rows };
+}
+
+// Set which kinds belong in a category. "kinds" is the full list wanted.
+//   - A kind brought in files here from now on.
+//   - A kind sent away goes back to its broad group's category, or to Other
+//     when the broad group is this very category.
+// This month's automatically filed charges of the changed kinds are re-filed.
+// input: { kinds, dryRun }
+async function setCategoryKinds(id, input, timeZone = DEFAULT_TIME_ZONE) {
+  const { kinds: wanted, dryRun = false } = input || {};
+  const valid =
+    Array.isArray(wanted) && wanted.length <= 200 && wanted.every((k) => typeof k === 'string');
+  if (!valid) throw httpError(400, 'kinds must be a list');
+
+  // This also checks that the category exists and is not Other.
+  const offered = (await listCategoryKinds(id, timeZone)).kinds;
+  const offeredCodes = new Set(offered.map((k) => k.kind));
+  for (const code of wanted) {
+    if (!offeredCodes.has(code)) throw httpError(400, `Unknown kind: ${code.slice(0, 80)}`);
+  }
+  const want = new Set(wanted);
+
+  const rules = await loadRules();
+  // What the kind alone would decide. Shares the kind rules with "rules".
+  const kindRulesOnly = { ...rules, byMerchantId: new Map(), byMerchantName: new Map() };
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+    await client.query('LOCK TABLE budgets IN SHARE ROW EXCLUSIVE MODE');
+
+    const setRule = async (kind, budgetId) => {
+      await client.query(
+        `INSERT INTO category_rules (plaid_category, budget_id, skip)
+         VALUES ($1, $2, false)
+         ON CONFLICT (plaid_category)
+         DO UPDATE SET budget_id = EXCLUDED.budget_id, skip = false`,
+        [kind, budgetId]
+      );
+      rules.byCategory.set(kind, { budgetId, skip: false });
+    };
+
+    const added = [];
+    const removed = [];
+    for (const k of offered) {
+      const here = want.has(k.kind);
+
+      if (here && !k.belongs) {
+        await setRule(k.kind, id);
+        added.push(k.kind);
+      }
+
+      if (!here && k.belongs) {
+        const own = rules.byCategory.get(k.kind);
+        if (own && own.budgetId === id) {
+          await client.query('DELETE FROM category_rules WHERE plaid_category = $1', [k.kind]);
+          rules.byCategory.delete(k.kind);
+        }
+        // Still landing here through its broad group: record the exception.
+        const next = categorize(
+          { categoryDetailed: k.kind, categoryPrimary: groupOfKind(k.kind) },
+          kindRulesOnly
+        );
+        if (!next.excluded && next.categoryId === id) await setRule(k.kind, rules.otherId);
+        removed.push(k.kind);
+      }
+    }
+
+    const moved = await refileThisMonth(client, rules, [...added, ...removed], timeZone);
+
+    await client.query(dryRun ? 'ROLLBACK' : 'COMMIT');
+    return { id, added, removed, moved, dryRun };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   createCategory,
   suggestForKinds,
@@ -570,6 +748,8 @@ module.exports = {
   removeCategory,
   previewRemoveCategory,
   saveCategoryOrder,
+  listCategoryKinds,
+  setCategoryKinds,
   NEW_ICONS,
   CHOOSABLE_ICONS,
 };
