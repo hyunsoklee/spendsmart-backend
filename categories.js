@@ -536,12 +536,40 @@ async function removeCategory(id, input) {
   }
 }
 
+// Save the household's order for categories: first in the list shows first.
+// Other is not part of it and always shows last.
+async function saveCategoryOrder(ids) {
+  const valid =
+    Array.isArray(ids) &&
+    ids.length > 0 &&
+    ids.length <= 100 &&
+    ids.every(Number.isInteger) &&
+    new Set(ids).size === ids.length;
+  if (!valid) throw httpError(400, 'ids must be a list of category ids');
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (let i = 0; i < ids.length; i += 1) {
+      await client.query('UPDATE budgets SET sort_order = $1 WHERE id = $2', [i + 1, ids[i]]);
+    }
+    await client.query('COMMIT');
+    return { saved: ids.length };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   createCategory,
   suggestForKinds,
   updateCategory,
   removeCategory,
   previewRemoveCategory,
+  saveCategoryOrder,
   NEW_ICONS,
   CHOOSABLE_ICONS,
 };

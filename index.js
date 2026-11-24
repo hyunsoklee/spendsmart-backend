@@ -275,6 +275,7 @@ const {
   updateCategory,
   removeCategory,
   previewRemoveCategory,
+  saveCategoryOrder,
 } = require('./categories');
 
 app.post('/api/categories/suggest', async (req, res) => {
@@ -319,6 +320,15 @@ app.get('/api/categories/:id/removal', async (req, res) => {
   } catch (err) {
     if (!err.status) console.error('GET /api/categories/:id/removal failed:', err.message);
     res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not work that out' });
+  }
+});
+
+app.post('/api/category-order', async (req, res) => {
+  try {
+    res.json(await saveCategoryOrder((req.body || {}).ids));
+  } catch (err) {
+    if (!err.status) console.error('POST /api/category-order failed:', err.message);
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not save the order' });
   }
 });
 
