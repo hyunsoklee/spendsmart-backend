@@ -11,7 +11,7 @@
 const pool = require('./db');
 const { loadRules, categorize } = require('./sync/categorize');
 const { DEFAULT_TIME_ZONE } = require('./spending');
-const { listKinds } = require('./kinds');
+const { listKinds, labelForKind, groupOfKind } = require('./kinds');
 const { suggestBudget, isAmount } = require('./setup');
 
 const NAME_MAX = 20;
@@ -305,14 +305,135 @@ async function updateCategory(id, input) {
   }
 }
 
+// Forget every rule that points at a category, in memory only.
+// Returns the kinds that filed there by rule.
+function forgetCategory(rules, id) {
+  const kinds = [];
+  for (const [kind, rule] of rules.byCategory) {
+    if (rule.budgetId === id) {
+      kinds.push(kind);
+      rules.byCategory.delete(kind);
+    }
+  }
+  for (const [key, budgetId] of rules.byMerchantId) {
+    if (budgetId === id) rules.byMerchantId.delete(key);
+  }
+  for (const [key, budgetId] of rules.byMerchantName) {
+    if (budgetId === id) rules.byMerchantName.delete(key);
+  }
+  return kinds;
+}
+
+// What removing a category would do, worked out without changing anything:
+// this month's charges by kind and where each would land, the kinds that
+// file here by rule even with no charges this month, and the budget.
+async function previewRemoveCategory(id, timeZone = DEFAULT_TIME_ZONE) {
+  if (!Number.isInteger(id)) throw httpError(400, 'Unknown category');
+
+  const rules = await loadRules();
+  const { rows: all } = await pool.query(
+    'SELECT id, category, icon, budget, is_system FROM budgets ORDER BY is_system, id'
+  );
+  const target = all.find((b) => b.id === id);
+  if (!target) throw httpError(404, 'Category not found');
+  if (target.is_system) throw httpError(400, 'This category cannot be removed');
+  const other = all.find((b) => b.is_system);
+  if (!other) throw new Error('No system category found.');
+
+  const byId = new Map(all.map((b) => [b.id, b]));
+  const describe = (b) => ({ id: b.id, category: b.category, icon: b.icon, isOther: b.is_system });
+
+  // The rules as they will be once this category is gone.
+  const ruledKinds = forgetCategory(rules, id);
+
+  // Where a charge of this kind would land. null means "not counted as spending".
+  const landing = (kind, group, row) => {
+    const next = categorize(
+      {
+        merchantEntityId: row ? row.merchant_entity_id : null,
+        merchantName: row ? row.merchant_name : null,
+        categoryDetailed: kind,
+        categoryPrimary: group,
+      },
+      rules
+    );
+    return next.excluded ? null : describe(byId.get(next.categoryId) || other);
+  };
+
+  const { rows } = await pool.query(
+    `SELECT merchant_entity_id, merchant_name, provider_category,
+            provider_category_primary, amount_cents, category_source
+     FROM transactions
+     WHERE category_id = $1
+       AND removed_at IS NULL
+       AND date >= date_trunc('month', now() AT TIME ZONE $2::text)::date
+       AND date <  (date_trunc('month', now() AT TIME ZONE $2::text) + interval '1 month')::date`,
+    [id, timeZone]
+  );
+
+  const groups = new Map();
+  const add = (key, label, to, cents) => {
+    let g = groups.get(key);
+    if (!g) {
+      g = { label, to, charges: 0, cents: 0 };
+      groups.set(key, g);
+    }
+    g.charges += 1;
+    g.cents += cents;
+  };
+
+  for (const row of rows) {
+    if (row.category_source === 'user') {
+      add('hand', 'Placed by hand', describe(other), row.amount_cents);
+      continue;
+    }
+    const kind = row.provider_category;
+    const group = row.provider_category_primary;
+    const to = landing(kind, group, row);
+    const label = kind ? labelForKind(kind, group) : 'Unlabelled charges';
+    add(`${kind}|${to ? to.id : 'none'}`, label, to, row.amount_cents);
+  }
+
+  // Kinds that file here by rule but have no charges this month.
+  for (const kind of ruledKinds) {
+    if ([...groups.keys()].some((key) => key.startsWith(`${kind}|`))) continue;
+    const group = groupOfKind(kind);
+    groups.set(`${kind}|rule`, {
+      label: labelForKind(kind, group),
+      to: landing(kind === group ? null : kind, group, null),
+      charges: 0,
+      cents: 0,
+    });
+  }
+
+  const moves = [...groups.values()]
+    .map((g) => ({
+      label: g.label,
+      charges: g.charges,
+      amount: Math.round(g.cents / 100),
+      to: g.to,
+    }))
+    .sort((a, b) => b.amount - a.amount || b.charges - a.charges);
+
+  return {
+    id,
+    category: target.category,
+    icon: target.icon,
+    budget: Number(target.budget),
+    moves,
+    returnTo: { ...describe(other), budget: Number(other.budget) },
+  };
+}
+
 // Remove a category.
 //   - Automatically filed charges go where the remaining rules put them.
 //   - Charges placed by hand go to Other.
-//   - Its budget goes back to Other, or to returnToId if given.
+//   - Its budget goes back to Other, or to returnToId if given, or is
+//     dropped from the total when dropBudget is true.
 // Other itself cannot be removed.
-// input: { returnToId, dryRun }
+// input: { returnToId, dropBudget, dryRun }
 async function removeCategory(id, input) {
-  const { returnToId, dryRun = false } = input || {};
+  const { returnToId, dropBudget = false, dryRun = false } = input || {};
   if (!Number.isInteger(id)) throw httpError(400, 'Unknown category');
   const hasReturnTo = returnToId !== undefined && returnToId !== null;
   if (hasReturnTo && !Number.isInteger(returnToId)) {
@@ -332,21 +453,17 @@ async function removeCategory(id, input) {
     if (target.is_system) throw httpError(400, 'This category cannot be removed');
     const other = all.find((b) => b.is_system);
     if (!other) throw new Error('No system category found.');
-    const returnTo = hasReturnTo ? all.find((b) => b.id === returnToId) : other;
-    if (!returnTo || returnTo.id === id) {
+    const returnTo = dropBudget
+      ? null
+      : hasReturnTo
+      ? all.find((b) => b.id === returnToId)
+      : other;
+    if (!dropBudget && (!returnTo || returnTo.id === id)) {
       throw httpError(400, 'Unknown category to return the budget to');
     }
 
     // The rules as they will be once this category is gone.
-    for (const [kind, rule] of rules.byCategory) {
-      if (rule.budgetId === id) rules.byCategory.delete(kind);
-    }
-    for (const [key, budgetId] of rules.byMerchantId) {
-      if (budgetId === id) rules.byMerchantId.delete(key);
-    }
-    for (const [key, budgetId] of rules.byMerchantName) {
-      if (budgetId === id) rules.byMerchantName.delete(key);
-    }
+    forgetCategory(rules, id);
 
     // 1. Charges placed by hand go to Other, and stay marked as placed by hand.
     const hand = await client.query(
@@ -389,10 +506,14 @@ async function removeCategory(id, input) {
       );
     }
 
-    // 3. Its budget goes back.
-    const was = Number(returnTo.budget);
-    const becomes = was + Number(target.budget);
-    await client.query('UPDATE budgets SET budget = $1 WHERE id = $2', [becomes, returnTo.id]);
+    // 3. Its budget goes back, unless it is being dropped from the total.
+    let returnedTo = null;
+    if (returnTo) {
+      const was = Number(returnTo.budget);
+      const becomes = was + Number(target.budget);
+      await client.query('UPDATE budgets SET budget = $1 WHERE id = $2', [becomes, returnTo.id]);
+      returnedTo = { id: returnTo.id, category: returnTo.category, was, becomes };
+    }
 
     // 4. The category itself. Its rules go with it.
     await client.query('DELETE FROM budgets WHERE id = $1', [id]);
@@ -403,7 +524,7 @@ async function removeCategory(id, input) {
       id,
       category: target.category,
       budget: Number(target.budget),
-      returnedTo: { id: returnTo.id, category: returnTo.category, was, becomes },
+      returnedTo,
       moved: { byRules: rows.length, toOther: hand.rowCount },
       dryRun,
     };
@@ -420,6 +541,7 @@ module.exports = {
   suggestForKinds,
   updateCategory,
   removeCategory,
+  previewRemoveCategory,
   NEW_ICONS,
   CHOOSABLE_ICONS,
 };

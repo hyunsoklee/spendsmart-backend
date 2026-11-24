@@ -130,4 +130,17 @@ async function listKinds(timeZone = DEFAULT_TIME_ZONE) {
   return { kinds };
 }
 
-module.exports = { listKinds, labelForKind, isVague };
+// The bank's broad groups. A kind's code starts with its group's code.
+const GROUPS = [
+  'GOVERNMENT_AND_NON_PROFIT', 'RENT_AND_UTILITIES', 'GENERAL_MERCHANDISE',
+  'HOME_IMPROVEMENT', 'LOAN_DISBURSEMENTS', 'GENERAL_SERVICES', 'FOOD_AND_DRINK',
+  'LOAN_PAYMENTS', 'PERSONAL_CARE', 'TRANSPORTATION', 'ENTERTAINMENT',
+  'TRANSFER_OUT', 'TRANSFER_IN', 'BANK_FEES', 'MEDICAL', 'INCOME', 'TRAVEL', 'OTHER',
+];
+
+// 'MEDICAL_PRIMARY_CARE' -> 'MEDICAL'
+function groupOfKind(kind) {
+  return GROUPS.find((g) => kind === g || kind.startsWith(g + '_')) || null;
+}
+
+module.exports = { listKinds, labelForKind, isVague, groupOfKind };

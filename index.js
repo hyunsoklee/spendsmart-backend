@@ -269,7 +269,13 @@ app.get('/api/kinds', async (req, res) => {
 });
 
 // Categories of your own
-const { createCategory, suggestForKinds, updateCategory, removeCategory } = require('./categories');
+const {
+  createCategory,
+  suggestForKinds,
+  updateCategory,
+  removeCategory,
+  previewRemoveCategory,
+} = require('./categories');
 
 app.post('/api/categories/suggest', async (req, res) => {
   try {
@@ -304,6 +310,15 @@ app.post('/api/categories/:id/remove', async (req, res) => {
   } catch (err) {
     if (!err.status) console.error('POST /api/categories/:id/remove failed:', err.message);
     res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not remove the category' });
+  }
+});
+
+app.get('/api/categories/:id/removal', async (req, res) => {
+  try {
+    res.json(await previewRemoveCategory(Number(req.params.id)));
+  } catch (err) {
+    if (!err.status) console.error('GET /api/categories/:id/removal failed:', err.message);
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not work that out' });
   }
 });
 
