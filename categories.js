@@ -42,7 +42,9 @@ async function pickKinds(kindCodes, timeZone) {
   if (!Array.isArray(kindCodes) || kindCodes.length > MAX_KINDS) {
     throw httpError(400, 'kinds must be a list');
   }
-  const { kinds } = await listKinds(timeZone);
+  const { kinds } = await listKinds(timeZone, {
+    include: kindCodes.filter((code) => typeof code === 'string'),
+  });
   const offered = new Map(kinds.map((k) => [k.kind, k]));
   const chosen = [];
   for (const code of new Set(kindCodes)) {

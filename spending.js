@@ -48,6 +48,7 @@ async function getCategoryTransactions(budgetId, timeZone = DEFAULT_TIME_ZONE) {
             t.amount_cents,
             t.pending,
             t.category_source,
+            t.provider_category AS kind,            
             t.split_user_id,          -- null = Shared
             u.name AS split_name,     -- null = Shared
             a.name AS card_name,

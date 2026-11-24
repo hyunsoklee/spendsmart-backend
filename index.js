@@ -261,7 +261,9 @@ app.post('/api/sync', async (req, res) => {
 const { listKinds } = require('./kinds');
 app.get('/api/kinds', async (req, res) => {
   try {
-    res.json(await listKinds());
+    const name = typeof req.query.name === 'string' ? req.query.name.slice(0, 60) : '';
+    const include = typeof req.query.include === 'string' ? [req.query.include.slice(0, 80)] : [];
+    res.json(await listKinds(undefined, { name, include, suggestIncluded: true }));
   } catch (err) {
     console.error('GET /api/kinds failed:', err.message);
     res.status(500).json({ error: 'Could not list kinds' });

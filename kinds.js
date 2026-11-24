@@ -11,6 +11,7 @@
 const pool = require('./db');
 const { loadRules, categorize, normalizeMerchantName } = require('./sync/categorize');
 const { DEFAULT_TIME_ZONE } = require('./spending');
+const { suggestedKindsFor } = require('./suggestions');
 
 // Readable names the automatic wording gets wrong.
 const LABEL_OVERRIDES = {
@@ -22,6 +23,19 @@ const LABEL_OVERRIDES = {
   FOOD_AND_DRINK_RESTAURANT: 'Restaurants',
   TRANSPORTATION_GAS: 'Gas stations',
 };
+
+// The bank's broad groups. A kind's code starts with its group's code.
+const GROUPS = [
+  'GOVERNMENT_AND_NON_PROFIT', 'RENT_AND_UTILITIES', 'GENERAL_MERCHANDISE',
+  'HOME_IMPROVEMENT', 'LOAN_DISBURSEMENTS', 'GENERAL_SERVICES', 'FOOD_AND_DRINK',
+  'LOAN_PAYMENTS', 'PERSONAL_CARE', 'TRANSPORTATION', 'ENTERTAINMENT',
+  'TRANSFER_OUT', 'TRANSFER_IN', 'BANK_FEES', 'MEDICAL', 'INCOME', 'TRAVEL', 'OTHER',
+];
+
+// 'MEDICAL_PRIMARY_CARE' -> 'MEDICAL'
+function groupOfKind(kind) {
+  return GROUPS.find((g) => kind === g || kind.startsWith(g + '_')) || null;
+}
 
 // 'RENT_AND_UTILITIES' -> 'Rent and utilities'
 function words(code) {
@@ -52,7 +66,14 @@ function hasMerchantRule(row, rules) {
 }
 
 // Every kind seen this month or last month, with where it files today.
-async function listKinds(timeZone = DEFAULT_TIME_ZONE) {
+// options:
+//   name             a category name; kinds that usually go with it are
+//                    marked as suggested, and listed even with no charges
+//   include          kind codes to list even with no charges lately
+//   suggestIncluded  also mark the included codes as suggested
+async function listKinds(timeZone = DEFAULT_TIME_ZONE, options = {}) {
+  const { name = '', include = [], suggestIncluded = false } = options;
+
   const rules = await loadRules();
   // What the kind alone would decide, ignoring remembered merchants.
   const kindRulesOnly = { ...rules, byMerchantId: new Map(), byMerchantName: new Map() };
@@ -82,20 +103,24 @@ async function listKinds(timeZone = DEFAULT_TIME_ZONE) {
   const budgets = new Map(budgetRes.rows.map((b) => [b.id, b]));
   const byKind = new Map();
 
+  // Where a kind files today, or null if it is not one to offer.
+  const placeFor = (kind, group) => {
+    if (!kind || isVague(kind, group)) return null;
+    const now = categorize({ categoryDetailed: kind, categoryPrimary: group }, kindRulesOnly);
+    if (now.excluded) return null;
+    return budgets.get(now.categoryId) || null;
+  };
+
   for (const row of txnRes.rows) {
     if (hasMerchantRule(row, rules)) continue;
 
     const kind = row.provider_category;
     const group = row.provider_category_primary;
-    if (isVague(kind, group)) continue;
-
-    const now = categorize({ categoryDetailed: kind, categoryPrimary: group }, kindRulesOnly);
-    if (now.excluded) continue;
-    const filedIn = budgets.get(now.categoryId);
-    if (!filedIn) continue;
 
     let entry = byKind.get(kind);
     if (!entry) {
+      const filedIn = placeFor(kind, group);
+      if (!filedIn) continue;
       entry = { kind, group, filedIn, charges: 0, cents: 0, lastMonthCents: 0 };
       byKind.set(kind, entry);
     }
@@ -105,6 +130,18 @@ async function listKinds(timeZone = DEFAULT_TIME_ZONE) {
     } else {
       entry.lastMonthCents += row.amount_cents;
     }
+  }
+
+  // Kinds asked for by name or by code, even with no charges lately.
+  const suggested = suggestedKindsFor(name);
+  if (suggestIncluded) include.forEach((code) => suggested.add(code));
+  for (const kind of new Set([...suggested, ...include])) {
+    if (typeof kind !== 'string' || byKind.has(kind)) continue;
+    const group = groupOfKind(kind);
+    if (!group || kind === group) continue;
+    const filedIn = placeFor(kind, group);
+    if (!filedIn) continue;
+    byKind.set(kind, { kind, group, filedIn, charges: 0, cents: 0, lastMonthCents: 0 });
   }
 
   const kinds = [...byKind.values()]
@@ -123,24 +160,11 @@ async function listKinds(timeZone = DEFAULT_TIME_ZONE) {
         icon: k.filedIn.icon,
         isOther: k.filedIn.is_system,
       },
-      suggested: false, // filled in from the category's name in a later stage
+      suggested: suggested.has(k.kind),
     }))
     .sort((a, b) => b.amount - a.amount || b.lastMonthAmount - a.lastMonthAmount);
 
   return { kinds };
-}
-
-// The bank's broad groups. A kind's code starts with its group's code.
-const GROUPS = [
-  'GOVERNMENT_AND_NON_PROFIT', 'RENT_AND_UTILITIES', 'GENERAL_MERCHANDISE',
-  'HOME_IMPROVEMENT', 'LOAN_DISBURSEMENTS', 'GENERAL_SERVICES', 'FOOD_AND_DRINK',
-  'LOAN_PAYMENTS', 'PERSONAL_CARE', 'TRANSPORTATION', 'ENTERTAINMENT',
-  'TRANSFER_OUT', 'TRANSFER_IN', 'BANK_FEES', 'MEDICAL', 'INCOME', 'TRAVEL', 'OTHER',
-];
-
-// 'MEDICAL_PRIMARY_CARE' -> 'MEDICAL'
-function groupOfKind(kind) {
-  return GROUPS.find((g) => kind === g || kind.startsWith(g + '_')) || null;
 }
 
 module.exports = { listKinds, labelForKind, isVague, groupOfKind };
