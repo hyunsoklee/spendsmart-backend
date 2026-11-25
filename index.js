@@ -354,6 +354,37 @@ app.post('/api/categories/:id/kinds', async (req, res) => {
   }
 });
 
+// Savings targets
+const savings = require('./savings');
+
+function savingsRoute(label, work) {
+  return async (req, res) => {
+    try {
+      res.json(await work(req));
+    } catch (err) {
+      if (!err.status) console.error(`${label} failed:`, err);
+      res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not save that' });
+    }
+  };
+}
+
+const targetId = (req) => Number(req.params.id);
+
+app.get('/api/savings/targets',
+  savingsRoute('GET /api/savings/targets', () => savings.listTargets()));
+
+app.post('/api/savings/targets',
+  savingsRoute('POST /api/savings/targets', (req) => savings.createTarget(req.body || {})));
+
+app.post('/api/savings/targets/:id',
+  savingsRoute('POST /api/savings/targets/:id', (req) => savings.updateTarget(targetId(req), req.body || {})));
+
+app.post('/api/savings/targets/:id/amount',
+  savingsRoute('POST /api/savings/targets/:id/amount', (req) => savings.setAmount(targetId(req), req.body || {})));
+
+app.post('/api/savings/targets/:id/remove',
+  savingsRoute('POST /api/savings/targets/:id/remove', (req) => savings.removeTarget(targetId(req), req.body || {})));
+
 // Health check with uptime
 const startTime = Date.now();
 
