@@ -21,7 +21,7 @@ const MAX_KINDS = 40;
 // so an icon can belong to only one category at a time.
 const NEW_ICONS = [
   'smile', 'heart', 'paw', 'cup', 'gift', 'home',
-  'book', 'dumbbell', 'repeat', 'scissors', 'star', 'phone',
+  'book', 'dumbbell', 'repeat', 'scissors', 'star', 'phone', 'medical'
 ];
 
 function httpError(status, message) {
